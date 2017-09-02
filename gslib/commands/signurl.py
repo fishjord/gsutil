@@ -35,6 +35,7 @@ from apitools.base.py.http_wrapper import Request
 
 from boto import config
 
+from gslib.cloud_api import AccessDeniedException
 from gslib.command import Command
 from gslib.command_argument import CommandArgument
 from gslib.cs_api_map import ApiSelector
@@ -67,7 +68,8 @@ _CANONICAL_REQUEST_FORMAT = ('{method}\n{resource}\n{query_string}\n{headers}'
                              '\n{signed_headers}\n{hashed_payload}')
 _STRING_TO_SIGN_FORMAT = ('{signing_algo}\n{request_time}\n{credential_scope}'
                           '\n{hashed_request}')
-_SIGNED_URL_FORMAT = 'https://{host}/{path}?x-goog-signature={sig}&{query_string}'
+_SIGNED_URL_FORMAT = ('https://{host}/{path}?x-goog-signature={sig}&'
+                      '{query_string}')
 
 _SYNOPSIS = """
   gsutil signurl [-c content_type] [-d duration] [-m http_method] \\
@@ -140,7 +142,7 @@ _DETAILED_HELP_TEXT = ("""
               Default value is 'auto' which will cause gsutil to fetch the
               region for the resource. When auto-detecting the region the
               current gsutil user's credentials, not the credentials from the
-              private-key-file.
+              private-key-file, are used to fetch the bucket's metadata.
 
               This option must be specified and not 'auto' when generating a
               signed URL to create a bucket.
@@ -472,9 +474,9 @@ class UrlSignCommand(Command):
       if url.IsBucket():
         if region == _AUTO_DETECT_REGION:
           raise CommandException('Generating signed URLs for creating buckets'
-                                 'requires a region be specified via the -r '
+                                 ' requires a region be specified via the -r '
                                  'option. Run `gsutil help signurl` for more '
-                                 'information about the -r option')
+                                 'information about the \'-r\' option.')
         gcs_path = url.bucket_name
         if method == 'RESUMABLE':
           raise CommandException('Resumable signed URLs require an object '
@@ -489,8 +491,15 @@ class UrlSignCommand(Command):
         if url.bucket_name in region_cache:
           bucket_region = region_cache[url.bucket_name]
         else:
-          _, bucket = self.GetSingleBucketUrlFromArg(
-              'gs://{}'.format(url.bucket_name), bucket_fields=['location'])
+          try:
+            _, bucket = self.GetSingleBucketUrlFromArg(
+                'gs://{}'.format(url.bucket_name), bucket_fields=['location'])
+          except Exception, e:
+            raise CommandException(
+                '{}: Failed to auto-detect location for bucket \'{}\'. Please '
+                'ensure you have storage.buckets.get permission on the bucket '
+                'or specify the bucket\'s location using the \'-r\' option.'
+                .format(e.__class__.__name__, url.bucket_name))
           bucket_region = bucket.location.lower()
           region_cache[url.bucket_name] = bucket_region
       else:
